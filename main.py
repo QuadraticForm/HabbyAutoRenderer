@@ -10,7 +10,6 @@ class HAR_OT_RenderAllCameras(Operator):
 
     def __init__(self):
         self.current_camera_index = 0
-        self.current_frame = 0
         self.cameras = []
         self.original_camera = None
         self.original_render_filepath = ""
@@ -23,34 +22,39 @@ class HAR_OT_RenderAllCameras(Operator):
         # Collect all cameras
         self.cameras = [obj for obj in scene.objects if obj.type == 'CAMERA']
 
+        bpy.context.scene.frame_set(scene.frame_start)
+        
         # Ensure correct number of digits in frame number
         min_digits = len(str(scene.frame_end))
-        if scene.frame_digits < min_digits:
-            scene.frame_digits = min_digits
+        if scene.frame_num_digits < min_digits:
+            scene.frame_num_digits = min_digits
 
         wm = context.window_manager
-        wm.progress_begin(0, len(self.cameras) * (scene.frame_end - scene.frame_start + 1))
         self._timer = wm.event_timer_add(0.1, window=context.window)
         wm.modal_handler_add(self)
         
         return {'RUNNING_MODAL'}
     
     def step(self, context):
+        
+        # file names
+        
         scene = context.scene
         camera = self.cameras[self.current_camera_index]
-        frame_str = f"{scene.frame_current:0{scene.frame_digits}d}"
+        frame_str = f"{scene.frame_current:0{scene.frame_num_digits}d}"
         
-        if scene.frame_prefix:
-            filename = f"{camera.name}_{frame_str}.png"
-            tag_filename = f"{camera.name}_{frame_str}.txt"
+        if scene.frame_num_pos == 'PREFIX':
+            filename = f"{frame_str} {camera.name}"
         else:
-            filename = f"{camera.name}_{frame_str}.png"
-            tag_filename = f"{camera.name}_{frame_str}.txt"
+            filename = f"{camera.name} {frame_str}"
+            
+        tag_filename = f"{filename}.txt"
         
         filepath = f"{self.original_render_filepath}/{filename}"
         tagpath = f"{self.original_render_filepath}/{tag_filename}"
 
         # Render frame
+        
         scene.camera = camera
         scene.render.filepath = filepath
         bpy.ops.render.render(write_still=True)
@@ -60,20 +64,24 @@ class HAR_OT_RenderAllCameras(Operator):
         with open(tagpath, 'w') as tag_file:
             tag_file.write(tag)
 
-        # Update current frame and progress
-        self.current_frame += 1
-        if self.current_frame > scene.frame_end:
-            self.current_frame = scene.frame_start
-            self.current_camera_index += 1
+        # Progress
+        
+        ## to next camera
+        self.current_camera_index += 1
+        if self.current_camera_index >= len(self.cameras):
+            ## to next frame
+            bpy.context.scene.frame_set(scene.frame_current + 1)
+            self.current_camera_index = 0
+
+        # update progress bar
 
         total_tasks = len(self.cameras) * (scene.frame_end - scene.frame_start + 1)
-        progress = (self.current_camera_index * (scene.frame_end - scene.frame_start + 1) + (self.current_frame - scene.frame_start)) / total_tasks
+        progress = (self.current_camera_index + len(self.cameras) * (scene.frame_current - scene.frame_start + 1)) / total_tasks
         context.scene.render_progress = progress  # Store progress in scene property
-        context.window_manager.progress_update(progress)
 
 
     def modal(self, context, event):
-        if self.current_camera_index >= len(self.cameras):
+        if context.scene.frame_current > context.scene.frame_end:
             # Cleanup and finish
             self.finish(context)
             context.scene.render_progress = 0  # Reset progress
@@ -98,7 +106,6 @@ class HAR_OT_RenderAllCameras(Operator):
         context.scene.render.filepath = self.original_render_filepath
         wm = context.window_manager
         wm.event_timer_remove(self._timer)
-        wm.progress_end()
 
 # Operator to add custom property to cameras if not present
 class HAR_OT_AddTagProperty(Operator):
@@ -116,29 +123,58 @@ class HAR_PT_RenderPanel(Panel):
     bl_region_type = "UI"
     bl_category = "HAR"
     bl_label = "Habby Auto Renderer"
+
     
     def draw(self, context):
         layout = self.layout
         scene = context.scene
 
-        # Display render properties
-        layout.prop(scene.render, "filepath")
-
-        row = layout.row()
-        row.label(text="Resolution")
-        row.prop(scene.render, "resolution_x", text="X")
-        row.prop(scene.render, "resolution_y", text="Y")
-
-        row = layout.row()
-        row.label(text="Frame Range")
-        row.prop(scene, "frame_start", text="Start")
-        row.prop(scene, "frame_end", text="End")
-
-        layout.prop(scene, "frame_prefix", text="Prefix Frame Number")
+        # Header
         
-        layout.prop(scene, "frame_digits", text="Frame Number Digits")
-
         layout.separator()
+        layout.label(text="File:")
+        
+        # Output
+        
+        layout.prop(scene.render, "filepath")
+        
+        # Frame Digits
+        row = layout.row()
+        row.label(text="Frame Number:")
+        row.prop(scene, "frame_num_digits", text="Digits")
+        row.prop(scene, "frame_num_pos", expand=True)
+        
+        # Header
+        
+        layout.separator()
+        layout.label(text="Params:")
+
+        # Resolution
+        
+        row = layout.row()
+        
+        row.label(text="Resolution")
+        
+        sublayout = row.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)      
+        sublayout.prop(scene.render, "resolution_x", text="X")
+        sublayout.prop(scene.render, "resolution_y", text="Y")
+
+        # Frame Range
+        
+        row = layout.row()
+        
+        row.label(text="Frame Range")
+        
+        sublayout = row.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
+        sublayout.prop(scene, "frame_start", text="Start")
+        sublayout.prop(scene, "frame_end", text="End")
+        
+        # Header
+        
+        layout.separator()
+        layout.label(text="Render Engine:")
+        
+        # Render Engine
 
         layout.prop(scene.render, "engine")
 
@@ -148,13 +184,16 @@ class HAR_PT_RenderPanel(Panel):
         elif scene.render.engine == 'CYCLES':
             layout.prop(scene.cycles, "samples")
             layout.prop(scene.cycles, "device")
+            
+        #
 
         layout.separator()
 
-        # Add Render All Cameras button
+        # Render All Cameras button 
+        
         layout.operator(HAR_OT_RenderAllCameras.bl_idname)
 
-        # Draw the progress bar if rendering is in progress
+        # Draw the progress bar if rendering is in progress 
         if scene.render_progress > 0:
             layout.separator()
             layout.label(text="Rendering... ESC to stop")
@@ -170,22 +209,33 @@ class HAR_PT_UtilitiesPanel(Panel):
     def draw(self, context):
         layout = self.layout
         
-        # Add Tag button
+        # Add Tag button 
         layout.operator(HAR_OT_AddTagProperty.bl_idname)
 
-  
+
 def register():
-    # class registers are handled by xuxing's auto_load, so not needed here
-    # Store additional properties on the scene
+    
     bpy.types.Scene.render_progress = bpy.props.FloatProperty(name="Render Progress", default=0.0, min=0, max=1)
-    bpy.types.Scene.frame_prefix = bpy.props.BoolProperty(name="Prefix Frame Number", default=True)
-    bpy.types.Scene.frame_digits = bpy.props.IntProperty(name="Frame Number Digits", default=4)
+
+    bpy.types.Scene.frame_num_digits = bpy.props.IntProperty(name="Frame Number Digits", default=4)
+    
+    bpy.types.Scene.frame_num_pos = bpy.props.EnumProperty(
+        name="Frame Num Position",
+        description="A simple switch with two options",
+        items=[
+            ('PREFIX', "Prefix", "Prefix"),
+            ('POSTFIX', "Postfix", "Postfix")
+        ],
+        default='PREFIX'
+    )
 
 def unregister():
-    # class unregisters are handled by xuxing's auto_load, so not needed here
+    
     del bpy.types.Scene.render_progress
-    del bpy.types.Scene.frame_prefix
-    del bpy.types.Scene.frame_digits
-
+    
+    del bpy.types.Scene.frame_num_digits
+    
+    del bpy.types.Scene.frame_num_pos 
+    
 if __name__ == "__main__":
     register()
