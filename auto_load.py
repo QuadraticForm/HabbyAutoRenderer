@@ -2,6 +2,7 @@
 # modified by xuxing
 
 '''
+1. No need to register/unregister classes
 
 in each module, all blender related classes will be automatically registered and unregistered
 and reload is handled gracefully
@@ -9,37 +10,43 @@ so stuff like this is not neccessary:
 
 def register():
     bpy.utils.register_class(HAR_OT_RenderAllCameras)
-    bpy.utils.register_class(HAR_OT_AddTagProperty)
     bpy.utils.register_class(HAR_PT_RenderPanel)
-    bpy.utils.register_class(HAR_PT_UtilitiesPanel)
+    ...
 
 def unregister():
     bpy.utils.unregister_class(HAR_OT_RenderAllCameras)
-    bpy.utils.unregister_class(HAR_OT_AddTagProperty)
     bpy.utils.unregister_class(HAR_PT_RenderPanel)
-    bpy.utils.unregister_class(HAR_PT_UtilitiesPanel)
+    ...
 
-how to use: in plugin's __init__.py:
+
+2. What about properties?
+
+however if there are register() and unregister() in each module, they will be called
+
+so you can put properties there like this:
+
+
+3. How to use this in your project?
+
+in plugin's __init__.py:
 
 import bpy
 import sys
 from . import auto_load
-from . import properties
 
 auto_load.init()
 
 def register():
     auto_load.register()
 
-    bpy.types.Scene.x_anim = bpy.props.PointerProperty(type=properties.x_anim_properties)
-
-
 def unregister():
     auto_load.unregister()
-
     auto_load.cleanse_modules(__name__)
 
-    del bpy.types.Scene.x_anim
+
+4. what about sub-folders?
+
+each sub folder should have an empty __init__.py file if you want this to work
 
 '''
 
